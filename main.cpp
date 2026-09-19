@@ -3,6 +3,8 @@
 #include <iostream>
 #include <pthread.h>
 #include <random>
+#include <stdexcept>
+#include <system_error>
 #include <vector>
 
 constexpr size_t THREADS_COUNT = 4;
@@ -61,7 +63,49 @@ size_t calc(double r, size_t tests, size_t seed)
 
 double area(double r, size_t threads, size_t tests)
 {
-  // return 4 * r * r * static_cast< double >(count) / static_cast< double >(threads * tests);
+  if (!threads || !tests || r <= 0.0) {
+    throw std::invalid_argument("All args must be greater than 0");
+  }
+
+  size_t base = tests / threads;
+  size_t remainder = tests % threads;
+  std::vector< pthread_t > ths(threads);
+  std::vector< Data > tasks;
+  tasks.reserve(threads);
+
+  for (size_t i = 0; i < threads; ++i) {
+    size_t currTests = base + ((i < remainder) ? 1 : 0);
+    tasks.push_back({r, currTests, i, 0});
+  }
+
+  for (size_t i = 0; i < threads; ++i) {
+    int err = pthread_create(&ths[i], nullptr, adapter, &tasks[i]);
+    if (err) {
+      for (size_t j = 0; j < i; ++j) {
+        pthread_join(ths[j], nullptr);
+      }
+      throw std::system_error(err, std::generic_category(), "pthread_create failed");
+    }
+  }
+
+  int firstError = 0;
+  for (pthread_t th : ths) {
+    int err = pthread_join(th, nullptr);
+    if (err && !firstError) {
+      firstError = err;
+    }
+  }
+
+  if (firstError) {
+    throw std::system_error(firstError, std::generic_category(), "pthread_join failed");
+  }
+
+  size_t count = 0;
+  for (const Data &task : tasks) {
+    count += task.res;
+  }
+
+  return 4.0 * r * r * static_cast< double >(count) / static_cast< double >(tests);
 }
 
 bool isInside(double x, double y, double r)
